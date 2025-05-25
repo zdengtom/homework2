@@ -1,0 +1,563 @@
+---
+title: "Homework 2"
+author: "Zhiheng Deng"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: zenburn
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+  pdf_document:
+    toc: yes
+---
+
+```{r}
+#| label: load-libraries
+#| echo: false # This option disables the printing of code (only output is displayed).
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(wbstats)
+library(skimr)
+library(countrycode)
+library(here)
+```
+
+# Data Visualisation - Exploration
+
+Now that you've demonstrated your software is setup, and you have the basics of data manipulation, the goal of this assignment is to practice transforming, visualising, and exploring data.
+
+# Exploring credit card fraud
+
+We will be using a dataset with credit card transactions containing legitimate and fraud transactions. Fraud is typically well below 1% of all transactions, so a naive model that predicts that all transactions are legitimate and not fraudulent would have an accuracy of well over 99%-- pretty good, no? (well, not quite as we will see later in the course)
+
+You can read more on credit card fraud on [Credit Card Fraud Detection Using Weighted Support Vector Machine](https://www.scirp.org/journal/paperinformation.aspx?paperid=105944)
+
+The dataset we will use consists of credit card transactions and it includes information about each transaction including customer details, the merchant and category of purchase, and whether or not the transaction was a fraud.
+
+## Obtain the data
+
+The dataset is too large to be hosted on Canvas or Github, so please download it from dropbox <https://www.dropbox.com/sh/q1yk8mmnbbrzavl/AAAxzRtIhag9Nc_hODafGV2ka?dl=0> and save it in your `dsb` repo, under the `data` folder
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+card_fraud <- read_csv("/Users/jay/Downloads/homework2/data/card_fraud.csv")
+
+
+glimpse(card_fraud)
+```
+
+The data dictionary is as follows
+
+| column(variable)      | description                                 |
+|-----------------------|---------------------------------------------|
+| trans_date_trans_time | Transaction DateTime                        |
+| trans_year            | Transaction year                            |
+| category              | category of merchant                        |
+| amt                   | amount of transaction                       |
+| city                  | City of card holder                         |
+| state                 | State of card holder                        |
+| lat                   | Latitude location of purchase               |
+| long                  | Longitude location of purchase              |
+| city_pop              | card holder's city population               |
+| job                   | job of card holder                          |
+| dob                   | date of birth of card holder                |
+| merch_lat             | Latitude Location of Merchant               |
+| merch_long            | Longitude Location of Merchant              |
+| is_fraud              | Whether Transaction is Fraud (1) or Not (0) |
+
+-   In this dataset, how likely are fraudulent transactions? Generate a table that summarizes the number and frequency of fraudulent transactions per year.
+
+```{r}
+library(lubridate)
+
+# Extract transaction year
+card_fraud <- card_fraud %>%
+  mutate(trans_year = year(as.Date(trans_date_trans_time)))
+
+# Summarize number and percentage of frauds per year
+fraud_summary <- card_fraud %>%
+  group_by(trans_year, is_fraud) %>%
+  summarise(transactions = n(), .groups = "drop") %>%
+  group_by(trans_year) %>%
+  mutate(
+    total_transactions = sum(transactions),
+    fraud_rate = transactions / total_transactions
+  ) %>%
+  arrange(trans_year, desc(is_fraud)) %>%
+  select(trans_year, is_fraud, transactions, fraud_rate)
+
+fraud_summary
+
+##Fraudulent transactions represent a very small fraction of total transactions each year. The fraud rate remains below 1%, which is consistent with real-world financial datasets. This also implies that fraud detection is a highly imbalanced classification problem.
+
+
+```
+
+
+
+-   How much money (in US\$ terms) are fraudulent transactions costing the company? Generate a table that summarizes the total amount of legitimate and fraudulent transactions per year and calculate the % of fraudulent transactions, in US\$ terms.
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+# Step 1: Extract year if not already done
+card_fraud <- card_fraud %>%
+  mutate(trans_year = year(as.Date(trans_date_trans_time)))
+
+# Step 2: Summarize total amount by year and fraud status
+amount_summary <- card_fraud %>%
+  group_by(trans_year, is_fraud) %>%
+  summarise(total_amount = sum(amt), .groups = "drop")
+
+# Step 3: Pivot wider to compare fraud vs legit and calculate % loss
+fraud_loss_summary <- amount_summary %>%
+  tidyr::pivot_wider(
+    names_from = is_fraud,
+    values_from = total_amount,
+    names_prefix = "fraud_"
+  ) %>%
+  rename(
+    fraud_amount = fraud_1,
+    legit_amount = fraud_0
+  ) %>%
+  mutate(
+    total = fraud_amount + legit_amount,
+    fraud_loss_pct = fraud_amount / total
+  )
+
+fraud_loss_summary
+
+##Fraudulent transactions represent a small fraction of the total transaction volume, but they still result in significant monetary losses:In 2019, fraudulent transactions accounted for $1.42 million, which is approximately 4.23% of the total transaction amount for the year. In 2020, the fraud cost was lower at $651,949, but made up a slightly higher percentage (4.80%) of the total transaction volume. This suggests that while the total volume of transactions decreased in 2020, fraud losses became relatively more impactful.
+
+```
+
+-   Generate a histogram that shows the distribution of amounts charged to credit card, both for legitimate and fraudulent accounts. Also, for both types of transactions, calculate some quick summary statistics.
+
+```{r}
+card_fraud %>%
+  group_by(is_fraud) %>%
+  summarise(
+    count = n(),
+    mean = mean(amt, na.rm = TRUE),
+    median = median(amt, na.rm = TRUE),
+    sd = sd(amt, na.rm = TRUE),
+    min = min(amt, na.rm = TRUE),
+    max = max(amt, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Histogram: Distribution of transaction amounts by fraud status
+ggplot(card_fraud, aes(x = amt, fill = factor(is_fraud))) +
+  geom_histogram(bins = 100, position = "identity", alpha = 0.5) +
+  scale_x_log10() +
+  scale_fill_manual(
+    name = "Fraud Status",
+    values = c("0" = "#1b9e77", "1" = "#d95f02"),
+    labels = c("Legitimate", "Fraudulent")
+  ) +
+  labs(
+    title = "Distribution of Credit Card Transaction Amounts",
+    x = "Transaction Amount (log scale)",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+######The histogram below compares the distribution of transaction amounts for legitimate and fraudulent transactions. We use a log scale to better visualize the highly skewed nature of the data. Most legitimate transactions fall within a modest amount range, while fraudulent ones—although fewer—are skewed toward higher values. The summary statistics support this observation. Fraudulent transactions have a **mean of $527** and a **median of $368**, compared to just **$67 and $47** respectively for legitimate ones. This indicates that **fraudulent transactions tend to be larger in value**, which may be a key signal for fraud detection models.
+
+
+
+
+```
+
+-   What types of purchases are most likely to be instances of fraud? Consider category of merchants and produce a bar chart that shows % of total fraudulent transactions sorted in order.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Calculate fraud counts and percentage by category
+fraud_by_category <- card_fraud %>%
+  filter(is_fraud == 1) %>%
+  count(category, sort = TRUE) %>%
+  mutate(perc = n / sum(n)) 
+
+# View table if needed
+fraud_by_category
+
+# Plot
+ggplot(fraud_by_category, aes(x = perc, y = fct_reorder(category, perc))) +
+  geom_col(fill = "tomato") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Fraudulent Transactions by Merchant Category",
+    x = "% of Total Fraudulent Transactions",
+    y = "Merchant Category"
+  ) +
+  theme_minimal()
+
+##The merchant categories with the highest share of fraudulent transactions are grocery_pos, shopping_net, and misc_net. These three alone account for over half of all fraud cases. It suggests that in-person and online shopping channels—especially for groceries and miscellaneous goods—are more vulnerable to fraudulent behavior. This could be due to either lower transaction monitoring in these categories or higher frequency of everyday small-value transactions making them easier to exploit.
+
+```
+
+-   When is fraud more prevalent? Which days, months, hours? To create new variables to help you in your analysis, we use the `lubridate` package and the following code
+
+``` {r}      
+card_fraud <- card_fraud %>%
+  mutate(
+    date_only = date(trans_date_trans_time),
+    month_name = month(trans_date_trans_time, label = TRUE),
+    hour = hour(trans_date_trans_time),
+    weekday = wday(trans_date_trans_time, label = TRUE)
+  )
+
+  
+fraud_by_weekday <- card_fraud %>%
+  group_by(weekday, is_fraud) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(weekday) %>%
+  mutate(pct = n / sum(n)) %>%
+  filter(is_fraud == 1)
+
+# Plot
+ggplot(fraud_by_weekday, aes(x = weekday, y = pct)) +
+  geom_col(fill = "tomato") +
+  labs(
+    title = "Fraud Rate by Day of the Week",
+    x = "Weekday", y = "Fraud % of Total Transactions"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal()
+
+fraud_by_month <- card_fraud %>%
+  group_by(month_name, is_fraud) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(month_name) %>%
+  mutate(pct = n / sum(n)) %>%
+  filter(is_fraud == 1)
+
+# Plot
+ggplot(fraud_by_month, aes(x = month_name, y = pct)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Fraud Rate by Month",
+    x = "Month", y = "Fraud % of Total Transactions"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal()
+
+fraud_by_hour <- card_fraud %>%
+  group_by(hour, is_fraud) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(hour) %>%
+  mutate(pct = n / sum(n)) %>%
+  filter(is_fraud == 1)
+
+# Plot
+ggplot(fraud_by_hour, aes(x = hour, y = pct)) +
+  geom_col(fill = "darkgreen") +
+  labs(
+    title = "Fraud Rate by Hour of Day",
+    x = "Hour (0–23)", y = "Fraud % of Total Transactions"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal()
+
+##We analyzed the fraud rate across three time dimensions: day of the week, month, and hour of the day.
+
+##By weekday, fraud tends to be slightly more frequent on weekdays, particularly on Wednesday, Thursday, and Friday, peaking on Thursday. By month, the highest fraud rates occur in January and February, which may reflect patterns of post-holiday spending or lag in fraud detection/reporting. Fraud is generally lower during the summer months. By hour, fraud occurs disproportionately around midnight and very early morning hours (0–3am and after 10pm). These late-night spikes suggest fraudulent activity is concentrated during off-peak hours, possibly to avoid detection or due to automated systems.
+
+```
+
+
+
+-   Are older customers significantly more likely to be victims of credit card fraud? To calculate a customer's age, we use the `lubridate` package and the following code
+
+```{r}
+library(lubridate)
+
+# Step 1: Calculate age at transaction
+card_fraud <- card_fraud %>%
+  mutate(age = interval(dob, trans_date_trans_time) / years(1))
+
+# Step 2: Remove missing ages (NA)
+card_fraud_clean <- card_fraud %>%
+  filter(!is.na(age), age < 100)  # remove extreme values
+
+# Step 3: Summary stats
+card_fraud_clean %>%
+  group_by(is_fraud) %>%
+  summarise(
+    count = n(),
+    mean_age = mean(age),
+    median_age = median(age),
+    sd_age = sd(age),
+    min_age = min(age),
+    max_age = max(age)
+  )
+
+# Step 4: Density plot
+ggplot(card_fraud_clean, aes(x = age, fill = factor(is_fraud))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("skyblue", "red"), labels = c("Legit", "Fraud")) +
+  labs(
+    title = "Age Distribution: Legitimate vs. Fraudulent Transactions",
+    x = "Age",
+    y = "Density",
+    fill = "Transaction Type"
+  ) +
+  theme_minimal()
+
+
+
+##The summary statistics reveal that the mean age of customers involved in fraudulent transactions is 49.0 years, which is slightly higher than the mean age of 46.0 years for legitimate transactions. The median ages (48.3 for fraud vs. 43.9 for legit) further support this trend.
+
+##The density plot shows that fraudulent activity tends to be more evenly distributed across middle-aged and older customers, while legitimate transactions have a stronger concentration among younger customers (20s–40s). This pattern suggests that older individuals may be slightly more vulnerable to fraud, although the difference isn't dramatic.
+
+```
+
+-   Is fraud related to distance? The distance between a card holder's home and the location of the transaction can be a feature that is related to fraud. To calculate distance, we need the latidue/longitude of card holders's home and the latitude/longitude of the transaction, and we will use the [Haversine formula](https://en.wikipedia.org/wiki/Haversine_formula) to calculate distance. I adapted code to [calculate distance between two points on earth](https://www.geeksforgeeks.org/program-distance-two-points-earth/amp/) which you can find below
+
+```{r}
+# distance between card holder's home and transaction
+# code adapted from https://www.geeksforgeeks.org/program-distance-two-points-earth/amp/
+
+
+card_fraud <- card_fraud %>%
+  mutate(
+    
+    # convert latitude/longitude to radians
+    lat1_radians = lat / 57.29577951,
+    lat2_radians = merch_lat / 57.29577951,
+    long1_radians = long / 57.29577951,
+    long2_radians = merch_long / 57.29577951,
+    
+    # calculate distance in miles
+    distance_miles = 3963.0 * acos((sin(lat1_radians) * sin(lat2_radians)) + cos(lat1_radians) * cos(lat2_radians) * cos(long2_radians - long1_radians)),
+
+    # calculate distance in km
+    distance_km = 6377.830272 * acos((sin(lat1_radians) * sin(lat2_radians)) + cos(lat1_radians) * cos(lat2_radians) * cos(long2_radians - long1_radians))
+
+  )
+
+ggplot(card_fraud, aes(x = factor(is_fraud), y = distance_km, fill = factor(is_fraud))) +
+  geom_violin(trim = TRUE, alpha = 0.6) +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"), labels = c("Legit", "Fraud")) +
+  labs(
+    title = "Distribution of Transaction Distance by Fraud Status",
+    x = "Fraud Status (0 = Legit, 1 = Fraud)",
+    y = "Distance (km)",
+    fill = "Transaction Type"
+  ) +
+  theme_minimal()
+
+ggplot(card_fraud, aes(x = factor(is_fraud), y = distance_km, fill = factor(is_fraud))) +
+  geom_boxplot(outlier.alpha = 0.2) +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"), labels = c("Legit", "Fraud")) +
+  labs(
+    title = "Boxplot of Distance by Transaction Type",
+    x = "Fraud Status",
+    y = "Distance (km)",
+    fill = "Transaction Type"
+  ) +
+  theme_minimal()
+
+card_fraud %>%
+  group_by(is_fraud) %>%
+  summarise(
+    count = n(),
+    mean_distance = mean(distance_km, na.rm = TRUE),
+    median_distance = median(distance_km, na.rm = TRUE),
+    sd_distance = sd(distance_km, na.rm = TRUE)
+  )
+
+##To investigate whether distance is related to credit card fraud, we calculated the geographic distance between a cardholder's home and the location of the transaction using the Haversine formula. This allowed us to compare how far customers were from the merchant at the time of purchase, for both legitimate and fraudulent transactions.
+
+##We visualized the results using violin and boxplots, and found that the distributions of transaction distances are highly similar for both fraud and non-fraud cases. The summary statistics further confirm this observation: the average transaction distance for legitimate purchases was approximately 76.2 km, while for fraudulent ones it was also around 76.2 km. Median values and standard deviations were likewise nearly identical.
+
+##Based on both the visualizations and the summary statistics, we conclude that distance does not appear to be a meaningful factor in distinguishing fraudulent from legitimate transactions in this dataset. There is no significant difference in how far a customer was from the merchant in fraud versus non-fraud cases.
+
+```
+
+Plot a boxplot or a violin plot that looks at the relationship of distance and `is_fraud`. Does distance seem to be a useful feature in explaining fraud?
+
+# Exploring sources of electricity production, CO2 emissions, and GDP per capita.
+
+There are many sources of data on how countries generate their electricity and their CO2 emissions. I would like you to create three graphs:
+
+## 1. A stacked area chart that shows how your own country generated its electricity since 2000.
+
+You will use
+
+`geom_area(colour="grey90", alpha = 0.5, position = "fill")`
+
+## 2. A scatter plot that looks at how CO2 per capita and GDP per capita are related
+
+## 3. A scatter plot that looks at how electricity usage (kWh) per capita/day GDP per capita are related
+
+We will get energy data from the Our World in Data website, and CO2 and GDP per capita emissions from the World Bank, using the `wbstats`package.
+
+```{r}
+#| message: false
+#| warning: false
+
+
+library(tidyverse)
+library(wbstats)
+library(countrycode)
+library(patchwork)
+
+# Download co2 data
+co2 <- "https://nyc3.digitaloceanspaces.com/owid-public/data/co2/owid-co2-data.csv" |> 
+  read_csv() |> 
+  filter(year >= 1990) 
+
+# Download electricity data
+energy <- "https://nyc3.digitaloceanspaces.com/owid-public/data/energy/owid-energy-data.csv" |> 
+  read_csv()  |>  
+  filter(year >= 1990) |> 
+  drop_na(iso_code) |> 
+  select(1:5,
+         biofuel = biofuel_electricity,
+         coal = coal_electricity,
+         gas = gas_electricity,
+         hydro = hydro_electricity,
+         nuclear = nuclear_electricity,
+         oil = oil_electricity,
+         other_renewable = other_renewable_exc_biofuel_electricity,
+         solar = solar_electricity,
+         wind = wind_electricity, 
+         electricity_demand,
+         electricity_generation,
+         electricity_share_energy,
+         net_elec_imports,
+         energy_per_capita,
+         energy_per_gdp,
+         per_capita_electricity)
+
+# Download GDP per capita data
+gdp_percap <- wb_data(country = "countries_only", 
+                      indicator = "NY.GDP.PCAP.PP.KD", 
+                      start_date = 1990, 
+                      end_date = 2023,
+                      return_wide = FALSE) |> 
+  filter(!is.na(value)) |> 
+  select(-c(unit, obs_status, footnote, last_updated)) |> 
+  rename(year = date,
+         GDPpercap = value,
+         iso_code = iso3c)
+
+# Prepare CO2 data
+co2_clean <- co2 |> 
+  select(iso_code, year, co2_per_capita)
+
+# Join GDP and CO2 to energy data
+combined_data <- energy |> 
+  left_join(gdp_percap, by = c("iso_code", "year")) |> 
+  left_join(co2_clean, by = c("iso_code", "year"))
+
+# Convert energy sources to long format
+energy_long <- energy |> 
+  pivot_longer(cols = c(biofuel, coal, gas, hydro, nuclear, oil, 
+                        other_renewable, solar, wind),
+               names_to = "source",
+               values_to = "electricity")
+
+# Plotting function
+plot_energy_gdp_co2 <- function(country_name) {
+  iso <- countrycode(country_name, origin = 'country.name', destination = 'iso3c')
+
+  # Area chart: electricity generation share
+  area_plot <- energy_long |> 
+    filter(iso_code == iso, year >= 2000) |> 
+    ggplot(aes(x = year, y = electricity, fill = source)) +
+    geom_area(position = "fill", colour = "grey90", alpha = 0.5) +
+    scale_y_continuous(labels = scales::percent) +
+    labs(title = paste("Electricity Generation Mix -", country_name),
+         y = "Share", x = NULL)
+
+  # Scatter plot: CO2 vs GDP
+  co2_gdp_plot <- combined_data |> 
+    filter(iso_code == iso) |> 
+    ggplot(aes(x = GDPpercap, y = co2_per_capita)) +
+    geom_point(color = "red") +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(title = "CO₂ per capita vs GDP per capita",
+         x = "GDP per capita", y = "CO₂ per capita")
+
+  # Scatter plot: Electricity vs GDP
+  elec_gdp_plot <- combined_data |> 
+    filter(iso_code == iso) |> 
+    ggplot(aes(x = GDPpercap, y = per_capita_electricity)) +
+    geom_point(color = "blue") +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(title = "Electricity Use per capita vs GDP",
+         x = "GDP per capita", y = "kWh per capita")
+
+  # Combine all three
+  area_plot / (co2_gdp_plot | elec_gdp_plot)
+}
+
+# Example:
+plot_energy_gdp_co2("China")
+
+##The stacked area chart shows that coal has consistently dominated China's electricity generation mix from 2000 to 2023. However, we see a gradual increase in renewable sources like wind and solar starting around 2010, reflecting China's growing investment in clean energy. The share of hydroelectric and nuclear energy also remains relatively stable, suggesting diversification without major disruption to coal reliance.
+
+##The scatter plot reveals a positive correlation between GDP per capita and CO₂ emissions per capita, suggesting that as China's economy grows, its carbon footprint tends to increase. This is consistent with industrial development and energy demand tied to economic expansion. However, the slope may flatten in later years, possibly due to improved energy efficiency and cleaner energy sources.
+
+##This plot shows a strong, positive linear relationship between electricity use per capita and GDP per capita. As income increases, electricity consumption also rises, reflecting growing household and industrial energy demands. This trend highlights the role of electricity access in supporting economic development.
+
+##Together, these graphs demonstrate how economic growth, energy use, and emissions are intertwined. China's transition toward renewables is underway, but coal remains a dominant player in its energy mix, contributing significantly to its CO₂ emissions.
+```
+
+Specific questions:
+
+1.  How would you turn `energy` to long, tidy format?
+
+We use pivot_longer() to transform the electricity generation dataset into a tidy format where each row represents one energy source per country-year pair. This structure is necessary for stacked area charts.
+
+2.  You may need to join these data frames
+    -   Use `left_join` from `dplyr` to [join the tables](http://r4ds.had.co.nz/relational-data.html)
+    -   To complete the merge, you need a unique *key* to match observations between the data frames. Country names may not be consistent among the three dataframes, so please use the 3-digit ISO code for each country
+    -   An aside: There is a great package called [`countrycode`](https://github.com/vincentarelbundock/countrycode) that helps solve the problem of inconsistent country names (Is it UK? United Kingdom? Great Britain?). `countrycode()` takes as an input a country's name in a specific format and outputs it using whatever format you specify.
+
+To combine the three datasets (energy, CO₂, GDP), we used left_join() from the dplyr package, matching on the iso_code and year columns. This ensures that we align records by both country and time. Country names can be inconsistent across datasets (e.g., "UK" vs. "United Kingdom"). However, since all datasets used 3-digit ISO codes (iso_code), we avoided name-matching issues and did not need countrycode().
+
+
+3.  Write a function that takes as input any country's name and returns all three graphs. You can use the `patchwork` package to arrange the three graphs as shown below
+
+plot_energy_co2_gdp() function accepts a country name and returns the 3 required plots using patchwork.
+
+
+
+# Deliverables
+
+There is a lot of explanatory text, comments, etc. You do not need these, so delete them and produce a stand-alone document that you could share with someone. Knit the edited and completed R Markdown (qmd) file as a Word or HTML document (use the "Knit" button at the top of the script editor window) and upload it to Canvas. You must be comitting and pushing your changes to your own Github repo as you go along.
+
+# Details
+
+-   Who did you collaborate with: N/A
+-   Approximately how much time did you spend on this problem set: 6 hours
+-   What, if anything, gave you the most trouble: N/A
+
+**Please seek out help when you need it,** and remember the [15-minute rule](https://dsb2023.netlify.app/syllabus/#the-15-minute-rule){target="_blank"}. You know enough R (and have enough examples of code from class and your readings) to be able to do this. If you get stuck, ask for help from others, post a question on Slack-- and remember that I am here to help too!
+
+> As a true test to yourself, do you understand the code you submitted and are you able to explain it to someone else?
+
+YES
+
+# Rubric
+
+13/13: Problem set is 100% completed. Every question was attempted and answered, and most answers are correct. Code is well-documented (both self-documented and with additional comments as necessary). Used tidyverse, instead of base R. Graphs and tables are properly labelled. Analysis is clear and easy to follow, either because graphs are labeled clearly or you've written additional text to describe how you interpret the output. Multiple Github commits. Work is exceptional. I will not assign these often.
+
+8/13: Problem set is 60--80% complete and most answers are correct. This is the expected level of performance. Solid effort. Hits all the elements. No clear mistakes. Easy to follow (both the code and the output). A few Github commits.
+
+5/13: Problem set is less than 60% complete and/or most answers are incorrect. This indicates that you need to improve next time. I will hopefully not assign these often. Displays minimal effort. Doesn't complete all components. Code is poorly written and not documented. Uses the same type of plot for each graph, or doesn't use plots appropriate for the variables being analyzed. No Github commits.
